@@ -60,8 +60,17 @@ Or invoke it explicitly with arguments:
 | `/agent-pair --new` | Start a fresh peer session |
 | `/agent-pair --resume <id>` | Continue the given peer session |
 | `/agent-pair --clear` | Permanently delete every peer session the current session created |
+| `/agent-pair branch` | Review the whole current branch (see below) |
 
 In Codex, use `$agent-pair` instead of `/agent-pair`.
+
+### What gets reviewed
+
+- **By default, only what is new since the last review.** After every round the script records a snapshot of the working tree for that peer session, and the next review starts from it. When there is no earlier review, it covers your uncommitted changes, or the code the host just wrote.
+- **`branch`** reviews the whole current branch against the default branch (`origin/HEAD`, else `main`, else `master`), uncommitted changes included. Use `branch develop` to compare against another branch.
+- **Natural language works too**: "review the last 3 commits", "review only src/api", "review the whole repository".
+
+Uncommitted and new untracked files are always part of the snapshot. Taking it never touches your index or working tree.
 
 `--clear` only deletes peer sessions **created by** the current host session. Peer sessions picked up with `--resume` that another session created are only unbound, never deleted.
 
@@ -102,14 +111,26 @@ Permissions the script gives the peer:
 | reviewer | `read-only` sandbox | edit tools disabled, Bash limited to `git diff/log/show/status` |
 | writer | `workspace-write` sandbox | edits auto-accepted, Bash limited to `git diff/status` |
 
+The Claude peer also ignores the reviewed repository's `.claude` project/local settings and all MCP servers, so the code under review cannot widen its permissions, and git's `--output` and `--ext-diff` options are denied.
+
+Known limits of the Claude peer's isolation:
+
+- Your user-level settings (`~/.claude/settings.json`) still apply, because they may hold auth or provider config. A user-wide allow rule such as `Bash(*)` therefore applies to the peer too.
+- `git diff`/`git log` still run external diff tools (`diff.external`) and textconv filters configured in your git config. If you configured one that points at a script inside the repository, a change under review could alter what it runs, and the peer runs it outside any sandbox. A Claude Code host without a sandbox runs the same commands anyway, but a sandboxed host such as Codex would normally run them inside its sandbox, so in that setup this is a real widening.
+
 So the peer usually cannot run tests; the host runs them. If needed, allow specific commands through `PAIR_CLAUDE_*_TOOLS` in the global config, e.g. `Bash(npm test:*)`.
 
 ## Files and state
 
 | Location | Contents |
 |---|---|
-| `<repo root>/.agent-pair/` | Session bindings and full per-round logs (`<peer>-<role>.log`); ships its own `.gitignore` |
-| `~/.agent-pair/ledger.tsv` | Which host session created each peer session, used by `--clear`; relocatable with `AGENT_PAIR_HOME` |
+| `~/.agent-pair/sessions/` | Which peer session each host session is bound to, per repository |
+| `~/.agent-pair/logs/` | Full output of every round, per repository (`<peer>-<role>.log`) |
+| `~/.agent-pair/ledger.tsv` | Which host session created each peer session, used by `--clear` |
+| `~/.agent-pair/reviewed/` | The working-tree snapshot after each peer session's last round, used as the default review start |
+| `<repo root>/.agent-pair/config.env` | Optional project config; only read, never written |
+
+Everything under `~/.agent-pair` can be relocated with `AGENT_PAIR_HOME`. The script never writes into your repository.
 
 The script detects the host session id itself: `CLAUDE_CODE_SESSION_ID` in Claude Code, `CODEX_THREAD_ID` in Codex. If detection fails, set `PAIR_HOST_SESSION` manually.
 
