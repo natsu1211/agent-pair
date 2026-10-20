@@ -1,59 +1,59 @@
 #!/usr/bin/env bash
-# agent-pair 辅助脚本：主控方（Claude Code 或 Codex）通过它与协作方的同一个会话多轮对话。
+# agent-pair helper: lets the host (Claude Code or Codex) hold a multi-round conversation with one peer session.
 #
-# 用法:
+# Usage:
 #   pair.sh <codex|claude> send <reviewer|writer> [--new | --resume ID] [--model M] [--effort E] "prompt"
-#                                                           # prompt 省略时从 stdin 读取
-#   pair.sh status                                          # 查看当前主控方会话绑定和创建的协作方会话
-#   pair.sh lookup <ID>                                     # 查询某个协作方会话 id 属于哪个 peer/role
-#   pair.sh reset [all|codex|claude|codex-reviewer|...]     # 解除当前主控方会话的绑定（默认 all），不删除会话
-#   pair.sh clear [--dry-run]                               # 永久删除当前主控方会话创建的全部协作方会话
+#                                                           # reads the prompt from stdin when omitted
+#   pair.sh status                                          # bindings of the current host session and the peer sessions it created
+#   pair.sh lookup <ID>                                     # which peer/role a peer session id belongs to
+#   pair.sh reset [all|codex|claude|codex-reviewer|...]     # unbind for the current host session (default all); sessions are kept
+#   pair.sh clear [--dry-run]                               # permanently delete every peer session the current host session created
 #
-# 第一个参数是"协作方"，也就是对方：
-#   在 Claude Code 里用 -> codex（底层是 codex exec / codex exec resume）
-#   在 Codex 里用       -> claude（底层是 claude -p / claude -p --resume）
+# The first argument is the peer, i.e. the other agent:
+#   from Claude Code -> codex  (codex exec / codex exec resume)
+#   from Codex       -> claude (claude -p / claude -p --resume)
 #
-# 角色与权限：
-#   reviewer  只读。codex: sandbox_mode=read-only；claude: 禁用编辑工具，Bash 只放行 git 只读命令
-#   writer    可改工作区文件。codex: sandbox_mode=workspace-write；claude: acceptEdits
+# Roles and permissions:
+#   reviewer  read-only. codex: sandbox_mode=read-only; claude: edit tools disabled, Bash limited to read-only git commands
+#   writer    may edit workspace files. codex: sandbox_mode=workspace-write; claude: acceptEdits
 #
-# 会话选择（send）：
-#   默认       接上当前主控方会话已绑定的协作方会话；没有绑定时新建
-#   --new      忽略已有绑定，新建会话
-#   --resume   接上指定 id 的协作方会话，并把它绑定到当前主控方会话
-#   每轮结束都会在 stderr 打印 "agent-pair: SESSION <peer>-<role> <id>"
+# Session selection (send):
+#   default    continue the peer session bound to the current host session; start a new one if none is bound
+#   --new      ignore the existing binding and start a new session
+#   --resume   continue the peer session with the given id and bind it to the current host session
+#   Every round prints "agent-pair: SESSION <peer>-<role> <id>" to stderr
 #
-# 主控方会话：Claude Code 取 CLAUDE_CODE_SESSION_ID，Codex 取 CODEX_THREAD_ID，
-#   通过向上查找父进程判断主控方是哪一个；可用 PAIR_HOST_SESSION 强制指定。
+# Host session: CLAUDE_CODE_SESSION_ID for Claude Code, CODEX_THREAD_ID for Codex.
+#   The host is identified by walking up the parent processes; PAIR_HOST_SESSION overrides it.
 #
-# 状态：
-#   <仓库根>/.agent-pair/（自带 .gitignore）
-#     sessions/<主控方会话>/<peer>-<role>.id  当前绑定的协作方会话 id
-#     <peer>-<role>.log                       每轮完整输出，出错时看这里
+# State:
+#   <repo root>/.agent-pair/ (ships its own .gitignore)
+#     sessions/<host session>/<peer>-<role>.id  currently bound peer session id
+#     <peer>-<role>.log                         full output of every round; look here on errors
 #   ${AGENT_PAIR_HOME:-~/.agent-pair}/ledger.tsv
-#     记录每个协作方会话由哪个主控方会话创建，clear 据此删除
+#     which host session created each peer session; clear uses it
 #
-# 模型与 effort，优先级从高到低：
-#   1. send 的 --model / --effort 参数（只影响这一轮）
-#   2. 环境变量 PAIR_<PEER>_<ROLE>_MODEL / PAIR_<PEER>_<ROLE>_EFFORT
-#      例如 PAIR_CODEX_REVIEWER_MODEL、PAIR_CLAUDE_WRITER_EFFORT
-#   3. 配置文件（KEY=value 格式，同样的变量名）：<仓库根>/.agent-pair/config.env 优先于 <skill目录>/config.env
-#   4. 都没设置时，用对方 CLI 自己的默认值
-#   effort 取值：codex 为 minimal|low|medium|high|xhigh；claude 为 low|medium|high|xhigh|max
-#   （codex 通过 -c model_reasoning_effort 传入；claude 通过 --effort 和 CLAUDE_CODE_EFFORT_LEVEL 传入）
+# Model and effort, highest priority first:
+#   1. --model / --effort on send (this round only)
+#   2. environment variables PAIR_<PEER>_<ROLE>_MODEL / PAIR_<PEER>_<ROLE>_EFFORT
+#      e.g. PAIR_CODEX_REVIEWER_MODEL, PAIR_CLAUDE_WRITER_EFFORT
+#   3. config files (KEY=value, same names): <repo root>/.agent-pair/config.env over <skill dir>/config.env
+#   4. otherwise the peer CLI's own defaults
+#   effort values: codex minimal|low|medium|high|xhigh; claude low|medium|high|xhigh|max
+#   (codex gets it via -c model_reasoning_effort; claude via --effort and CLAUDE_CODE_EFFORT_LEVEL)
 #
-# 涉及权限的设置，只能通过环境变量或 <skill目录>/config.env 设置，仓库级配置里写了会被忽略：
-#   PAIR_CODEX_EXTRA                       额外传给 codex exec 的参数（按空格切分）
-#   PAIR_CLAUDE_REVIEWER_TOOLS             覆盖 claude 审查者的 --allowedTools（逗号分隔）
-#   PAIR_CLAUDE_WRITER_TOOLS               覆盖 claude 编写者的 --allowedTools（逗号分隔）
+# Permission-related settings, only honored from the environment or <skill dir>/config.env (ignored in repo config):
+#   PAIR_CODEX_EXTRA                       extra arguments for codex exec (split on spaces)
+#   PAIR_CLAUDE_REVIEWER_TOOLS             overrides --allowedTools for the claude reviewer (comma separated)
+#   PAIR_CLAUDE_WRITER_TOOLS               overrides --allowedTools for the claude writer (comma separated)
 
 set -euo pipefail
 
 die() { echo "agent-pair: $*" >&2; exit 1; }
 
-# 防递归：被调用的协作方进程里会带这个变量，它不能再去调用别人
+# Recursion guard: the peer process carries this variable and must not call another agent
 if [[ -n "${AGENT_PAIR_PEER:-}" ]]; then
-  die "当前进程本身是被 agent-pair 调用的协作方，不允许再调用其他 agent（防止互相递归调用）"
+  die "this process is itself a peer called by agent-pair and may not call another agent (prevents mutual recursion)"
 fi
 
 ROOT=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
@@ -71,9 +71,10 @@ for _p in CODEX CLAUDE; do for _r in REVIEWER WRITER; do MODEL_KEYS+=" PAIR_${_p
 PERMISSION_KEYS="PAIR_CODEX_EXTRA PAIR_CLAUDE_REVIEWER_TOOLS PAIR_CLAUDE_WRITER_TOOLS"
 unset _p _r
 
-# 配置文件是 KEY=value 纯文本，只当数据读取，不执行。已设置的变量不覆盖，所以环境变量总是优先；
-# 仓库级配置先加载，因此它优先于全局配置。仓库级配置可能来自不可信的仓库，只允许设置模型和 effort，
-# 否则它能借 PAIR_CODEX_EXTRA 或 *_TOOLS 放宽协作方的沙箱和权限
+# Config files are plain KEY=value text, read as data and never executed. Variables that are already set are kept,
+# so the environment always wins, and the repo config is loaded first so it beats the global one. A repo config may
+# come from an untrusted repository, so it may only set models and efforts; otherwise it could loosen the peer's
+# sandbox and permissions through PAIR_CODEX_EXTRA or *_TOOLS
 load_config() {
   local file="$1" allowed="$2" line key val n=0
   [[ -f "$file" ]] || return 0
@@ -82,13 +83,13 @@ load_config() {
     line="${line%$'\r'}"
     [[ "$line" =~ ^[[:space:]]*(#|$) ]] && continue
     if [[ ! "$line" =~ ^[[:space:]]*([A-Za-z_][A-Za-z0-9_]*)[[:space:]]*=[[:space:]]*(.*)$ ]]; then
-      echo "agent-pair: 警告：$file 第 $n 行无法解析，已忽略" >&2; continue
+      echo "agent-pair: warning: cannot parse $file line $n, ignored" >&2; continue
     fi
     key="${BASH_REMATCH[1]}"; val="${BASH_REMATCH[2]}"
     val="${val%"${val##*[![:space:]]}"}"
     if [[ "$val" =~ ^\"(.*)\"$ || "$val" =~ ^\'(.*)\'$ ]]; then val="${BASH_REMATCH[1]}"; fi
     if [[ " $allowed " != *" $key "* ]]; then
-      echo "agent-pair: 警告：$file 第 $n 行的 $key 不是这里允许的配置项，已忽略" >&2; continue
+      echo "agent-pair: warning: $key ($file line $n) is not allowed here, ignored" >&2; continue
     fi
     [[ -n "${!key+x}" ]] || printf -v "$key" '%s' "$val"
   done <"$file"
@@ -96,7 +97,7 @@ load_config() {
 
 SKILL_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 for _old in "$STATE_DIR/config.sh" "$SKILL_DIR/config.sh"; do
-  [[ -f "$_old" ]] && echo "agent-pair: 警告：已不再读取 ${_old}，请改写为同目录下的 config.env（KEY=value 格式）" >&2
+  [[ -f "$_old" ]] && echo "agent-pair: warning: $_old is no longer read; rewrite it as config.env (KEY=value) in the same directory" >&2
 done
 unset _old
 load_config "$STATE_DIR/config.env" "$MODEL_KEYS"
@@ -107,7 +108,7 @@ cleanup() { [[ ${#TMP_FILES[@]} -gt 0 ]] && rm -f "${TMP_FILES[@]}"; return 0; }
 trap cleanup EXIT
 mktmp() { local f; f=$(mktemp); TMP_FILES+=("$f"); printf '%s' "$f"; }
 
-# 从单个 JSON 对象文件里取顶层字段
+# Read a top-level field from a file holding a single JSON object
 json_get() {
   local file="$1" key="$2"
   if command -v jq >/dev/null 2>&1; then
@@ -126,12 +127,12 @@ PY
   return 1
 }
 
-# 会话 id 会拼进文件路径并用于删除，只接受字母、数字、- 和 _
+# Session ids end up in file paths and deletions, so only letters, digits, - and _ are accepted
 valid_id() { [[ "$1" =~ ^[A-Za-z0-9_-]+$ ]]; }
 
-# ---------- 主控方会话 ----------
-# 环境变量可能从更外层的 agent 继承下来（比如在 Claude Code 里启动的 Codex），
-# 所以先沿父进程链找到最近的 claude/codex 进程，再取对应的变量
+# ---------- host session ----------
+# The environment variables may be inherited from an outer agent (e.g. Codex started inside Claude Code),
+# so find the nearest claude/codex ancestor process first and then read the matching variable
 detect_host_kind() {
   local pid=$PPID comm
   while [[ -n "$pid" && "$pid" -gt 1 ]]; do
@@ -144,7 +145,7 @@ detect_host_kind() {
   done
 }
 
-# $1：识别失败时假定的主控方（send 时由协作方推出）
+# $1: host kind to assume when detection fails (send derives it from the peer)
 resolve_host() {
   HOST_SID="${PAIR_HOST_SESSION:-}"
   [[ -n "$HOST_SID" ]] && return 0
@@ -160,8 +161,8 @@ resolve_host() {
 
 host_dir() { printf '%s/sessions/%s' "$STATE_DIR" "${HOST_SID:-unknown-host}"; }
 
-# ---------- 账本：协作方会话 <- 创建它的主控方会话 ----------
-# 每行：时间 \t 主控方会话 \t peer \t role \t 协作方会话 \t 仓库根
+# ---------- ledger: peer session <- host session that created it ----------
+# Each line: time \t host session \t peer \t role \t peer session \t repo root
 ledger_has() { [[ -f "$LEDGER" ]] && awk -F'\t' -v id="$1" '$5==id {f=1} END {exit !f}' "$LEDGER"; }
 
 ledger_add() {
@@ -179,7 +180,13 @@ ledger_remove() {
   awk -F'\t' -v id="$id" '$5!=id' "$LEDGER" >"$tmp" && cat "$tmp" >"$LEDGER"
 }
 
-# ---------- 协作方会话文件 ----------
+# Output: peer role host-session repo-root
+ledger_lookup() {
+  [[ -f "$LEDGER" ]] || return 0
+  awk -F'\t' -v id="$1" '$5==id {print $3, $4, $2, $6; exit}' "$LEDGER"
+}
+
+# ---------- peer session files ----------
 peer_session_exists() {
   local peer="$1" id="$2"
   case "$peer" in
@@ -190,7 +197,7 @@ peer_session_exists() {
   esac
 }
 
-# 返回 0：已删除；2：本来就不存在；其他：删除失败
+# Returns 0: deleted; 2: did not exist; anything else: deletion failed
 delete_peer_session() {
   local peer="$1" id="$2"
   valid_id "$id" || return 1
@@ -203,7 +210,7 @@ delete_peer_session() {
       ;;
     claude)
       local f found=0
-      # 会话目录下的同名子目录存放子 agent 记录和大段工具输出
+      # The directory named after the session holds subagent transcripts and large tool outputs
       for f in "$CLAUDE_DIR"/projects/*/"$id".jsonl "$CLAUDE_DIR"/projects/*/"$id"; do
         [[ -e "$f" ]] || continue
         rm -rf -- "$f"; found=1
@@ -214,10 +221,10 @@ delete_peer_session() {
   esac
 }
 
-# ---------- 协作方：Codex ----------
+# ---------- peer: Codex ----------
 run_codex() {
   local role="$1" prompt="$2" sid="$3" events="$4" reply="$5"
-  command -v codex >/dev/null 2>&1 || die "找不到 codex 命令"
+  command -v codex >/dev/null 2>&1 || die "codex command not found"
   local sandbox
   case "$role" in reviewer) sandbox="read-only" ;; writer) sandbox="workspace-write" ;; esac
 
@@ -247,17 +254,17 @@ run_codex() {
   fi
 }
 
-# ---------- 协作方：Claude Code ----------
+# ---------- peer: Claude Code ----------
 run_claude() {
   local role="$1" prompt="$2" sid="$3" events="$4" reply="$5"
-  command -v claude >/dev/null 2>&1 || die "找不到 claude 命令"
+  command -v claude >/dev/null 2>&1 || die "claude command not found"
 
   local sys_prompt
   local -a opts=(-p --output-format json)
   [[ -n "$sid" ]] && opts+=(--resume "$sid")
   [[ -n "$MODEL" ]] && opts+=(--model "$MODEL")
-  # CLAUDE_CODE_EFFORT_LEVEL 的优先级高于 --effort，所以两者都设成同一个值；
-  # 没指定 effort 时清掉继承来的环境变量，避免主控方自己的设置传给协作方
+  # CLAUDE_CODE_EFFORT_LEVEL takes precedence over --effort, so both get the same value; without an effort,
+  # drop the inherited variable so the host's own setting does not leak into the peer
   local -a effort_env=(env -u CLAUDE_CODE_EFFORT_LEVEL)
   if [[ -n "$EFFORT" ]]; then
     opts+=(--effort "$EFFORT")
@@ -286,37 +293,37 @@ run_claude() {
   local is_error; is_error=$(json_get "$events" is_error || true)
   [[ "$is_error" == "true" || "$is_error" == "True" ]] && return 3
   json_get "$events" result >"$reply" || return 4
-  # claude 恢复会话后可能返回新的 session_id，所以每轮都以返回值为准
+  # claude may return a new session_id after resuming, so always trust the returned value
   NEW_ID=$(json_get "$events" session_id || true)
   [[ -n "$NEW_ID" ]] || NEW_ID="$sid"
 }
 
 cmd_send() {
   local peer="$1" role="${2:-}"
-  case "$role" in reviewer|writer) ;; *) die "角色应为 reviewer 或 writer" ;; esac
+  case "$role" in reviewer|writer) ;; *) die "role must be reviewer or writer" ;; esac
   shift 2
 
   local cli_model="" cli_effort="" force_new=0 resume_id=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      --model)  [[ $# -ge 2 ]] || die "--model 需要一个值"; cli_model="$2"; shift 2 ;;
-      --effort) [[ $# -ge 2 ]] || die "--effort 需要一个值"; cli_effort="$2"; shift 2 ;;
+      --model)  [[ $# -ge 2 ]] || die "--model needs a value"; cli_model="$2"; shift 2 ;;
+      --effort) [[ $# -ge 2 ]] || die "--effort needs a value"; cli_effort="$2"; shift 2 ;;
       --new)    force_new=1; shift ;;
-      --resume) [[ $# -ge 2 ]] || die "--resume 需要一个会话 id"; resume_id="$2"; shift 2 ;;
+      --resume) [[ $# -ge 2 ]] || die "--resume needs a session id"; resume_id="$2"; shift 2 ;;
       --) shift; break ;;
       *) break ;;
     esac
   done
-  [[ $force_new -eq 1 && -n "$resume_id" ]] && die "--new 和 --resume 不能同时使用"
+  [[ $force_new -eq 1 && -n "$resume_id" ]] && die "--new and --resume cannot be used together"
   if [[ -n "$resume_id" ]]; then
-    valid_id "$resume_id" || die "会话 id 格式不对：$resume_id"
+    valid_id "$resume_id" || die "malformed session id: $resume_id"
     local owner o_peer o_role; owner=$(ledger_lookup "$resume_id")
     if [[ -n "$owner" ]]; then
       read -r o_peer o_role _ <<<"$owner"
-      [[ "$o_peer" == "$peer" ]] || die "会话 $resume_id 是 $o_peer 的会话，不能交给 $peer 接续"
-      [[ "$o_role" == "$role" ]] || echo "agent-pair: 提示：会话 $resume_id 之前用作 ${o_role}，这次用作 $role" >&2
+      [[ "$o_peer" == "$peer" ]] || die "session $resume_id belongs to $o_peer and cannot be resumed by $peer"
+      [[ "$o_role" == "$role" ]] || echo "agent-pair: note: session $resume_id was used as $o_role before, now as $role" >&2
     elif ! peer_session_exists "$peer" "$resume_id"; then
-      echo "agent-pair: 警告：本地没找到 $peer 会话 $resume_id 的记录文件，仍会尝试接续" >&2
+      echo "agent-pair: warning: no local record file for $peer session $resume_id, trying to resume anyway" >&2
     fi
   fi
 
@@ -327,18 +334,18 @@ cmd_send() {
   if [[ -n "$EFFORT" ]]; then
     local allowed
     case "$peer" in codex) allowed="minimal low medium high xhigh" ;; claude) allowed="low medium high xhigh max" ;; esac
-    [[ " $allowed " == *" $EFFORT "* ]] || echo "agent-pair: 警告：$peer 的 effort 通常取 {$allowed}，收到的是 '$EFFORT'，仍会照传" >&2
+    [[ " $allowed " == *" $EFFORT "* ]] || echo "agent-pair: warning: $peer effort is usually one of {$allowed}, got '$EFFORT'; passing it through anyway" >&2
   fi
-  echo "agent-pair: $peer/$role 本轮 model=${MODEL:-默认} effort=${EFFORT:-默认}" >&2
+  echo "agent-pair: $peer/$role this round model=${MODEL:-default} effort=${EFFORT:-default}" >&2
 
   local prompt
   if [[ $# -gt 0 ]]; then prompt="$*"; else prompt=$(cat); fi
-  [[ -n "${prompt//[[:space:]]/}" ]] || die "prompt 为空"
+  [[ -n "${prompt//[[:space:]]/}" ]] || die "prompt is empty"
 
-  # 协作方是 codex 说明主控方是 claude，反之亦然
+  # A codex peer means a claude host, and vice versa
   local host_hint; case "$peer" in codex) host_hint=claude ;; claude) host_hint=codex ;; esac
   resolve_host "$host_hint"
-  [[ -n "$HOST_SID" ]] || echo "agent-pair: 警告：识别不到主控方会话 id，会话绑定会和其他主控方共用，clear 也无法使用" >&2
+  [[ -n "$HOST_SID" ]] || echo "agent-pair: warning: cannot detect the host session id; bindings will be shared with other hosts and clear is unavailable" >&2
 
   local key="$peer-$role"
   local hdir; hdir=$(host_dir)
@@ -356,7 +363,7 @@ cmd_send() {
   "run_$peer" "$role" "$prompt" "$sid" "$events" "$reply" || rc=$?
 
   { echo "===== $(date '+%F %T') peer=$peer role=$role model=${MODEL:-default} effort=${EFFORT:-default} host=${HOST_SID:-unknown} session=${sid:-new} rc=$rc ====="; cat "$events"; echo; } >>"$log"
-  [[ $rc -eq 0 ]] || die "$peer 调用失败（rc=${rc}），完整输出见 $log"
+  [[ $rc -eq 0 ]] || die "$peer call failed (rc=$rc), full output in $log"
 
   if [[ -n "$NEW_ID" ]] && valid_id "$NEW_ID"; then
     mkdir -p "$hdir"
@@ -365,23 +372,17 @@ cmd_send() {
     echo "agent-pair: SESSION $key $NEW_ID" >&2
   else
     rm -f "$id_file"
-    echo "agent-pair: 警告：没能取到会话 id，下一轮会新开会话，请检查 $log" >&2
+    echo "agent-pair: warning: could not get the session id; the next round will start a new session, check $log" >&2
   fi
 
-  [[ -s "$reply" ]] || die "$peer 没有返回最终回复，完整输出见 $log"
+  [[ -s "$reply" ]] || die "$peer returned no final reply, full output in $log"
   cat "$reply"
   [[ "$(tail -c1 "$reply")" == "" ]] || echo
 }
 
-# 输出：peer role 主控方会话 仓库根
-ledger_lookup() {
-  [[ -f "$LEDGER" ]] || return 0
-  awk -F'\t' -v id="$1" '$5==id {print $3, $4, $2, $6; exit}' "$LEDGER"
-}
-
 cmd_lookup() {
   local id="${1:-}"
-  [[ -n "$id" ]] || die "用法：pair.sh lookup <会话 id>"
+  [[ -n "$id" ]] || die "usage: pair.sh lookup <session id>"
   local info peer role host root; info=$(ledger_lookup "$id")
   if [[ -n "$info" ]]; then
     read -r peer role host root <<<"$info"
@@ -389,28 +390,28 @@ cmd_lookup() {
   else
     local p
     for p in codex claude; do
-      if peer_session_exists "$p" "$id"; then echo "peer=$p role=unknown（不是 agent-pair 创建的，或账本里没有记录）"; return 0; fi
+      if peer_session_exists "$p" "$id"; then echo "peer=$p role=unknown (not created by agent-pair, or missing from the ledger)"; return 0; fi
     done
-    die "没有找到会话 $id"
+    die "session $id not found"
   fi
 }
 
 cmd_status() {
   resolve_host ""
-  echo "主控方会话：${HOST_SID:-（识别不到）}"
-  echo "当前绑定（${ROOT}）："
+  echo "Host session: ${HOST_SID:-(not detected)}"
+  echo "Bindings ($ROOT):"
   local found=0 f hdir; hdir=$(host_dir)
   for f in "$hdir"/*.id; do
     [[ -e "$f" ]] || continue
     found=1
     echo "  $(basename "$f" .id): $(cat "$f")"
   done
-  [[ $found -eq 1 ]] || echo "  （没有）"
-  echo "本主控方会话创建的协作方会话："
+  [[ $found -eq 1 ]] || echo "  (none)"
+  echo "Peer sessions created by this host session:"
   if [[ -n "$HOST_SID" && -f "$LEDGER" ]] && awk -F'\t' -v h="$HOST_SID" '$2==h {f=1} END {exit !f}' "$LEDGER"; then
     awk -F'\t' -v h="$HOST_SID" '$2==h {printf "  %s-%s: %s  (%s, %s)\n", $3, $4, $5, $1, $6}' "$LEDGER"
   else
-    echo "  （没有）"
+    echo "  (none)"
   fi
 }
 
@@ -423,16 +424,16 @@ cmd_reset() {
   elif [[ "$which" =~ ^(codex|claude)(-(reviewer|writer))?$ ]]; then
     rm -f "$hdir/$which".id "$hdir/$which"-*.id
   else
-    die "reset 参数应为 all、codex、claude，或 <peer>-<role>（如 codex-reviewer）"
+    die "reset takes all, codex, claude, or <peer>-<role> (e.g. codex-reviewer)"
   fi
-  echo "agent-pair: 已解除绑定 ${which}（会话本身仍保留，可用 --resume 接续）"
+  echo "agent-pair: unbound $which (the sessions themselves are kept and can be continued with --resume)"
 }
 
 cmd_clear() {
   local dry=0
   [[ "${1:-}" == "--dry-run" ]] && dry=1
   resolve_host ""
-  [[ -n "$HOST_SID" ]] || die "识别不到主控方会话 id，无法判断哪些会话属于当前会话。可设置 PAIR_HOST_SESSION 后重试"
+  [[ -n "$HOST_SID" ]] || die "cannot detect the host session id, so cannot tell which sessions belong to it. Set PAIR_HOST_SESSION and retry"
 
   local -a rows=()
   if [[ -f "$LEDGER" ]]; then
@@ -445,25 +446,25 @@ cmd_clear() {
     IFS=$'\t' read -r ts host peer role id root <<<"$line"
     roots+=("$root")
     if [[ $dry -eq 1 ]]; then
-      echo "将删除 $peer-$role ${id}（${ts}，${root}）"
+      echo "would delete $peer-$role $id ($ts, $root)"
       continue
     fi
     rc=0; delete_peer_session "$peer" "$id" || rc=$?
     case $rc in
-      0) echo "已删除 $peer-$role $id"; ledger_remove "$id"; deleted=$((deleted + 1)) ;;
-      2) echo "已不存在 $peer-$role $id"; ledger_remove "$id" ;;
-      *) echo "删除失败 $peer-$role ${id}（保留在账本里，可重试）"; failed=$((failed + 1)) ;;
+      0) echo "deleted $peer-$role $id"; ledger_remove "$id"; deleted=$((deleted + 1)) ;;
+      2) echo "already gone $peer-$role $id"; ledger_remove "$id" ;;
+      *) echo "failed to delete $peer-$role $id (kept in the ledger, retry later)"; failed=$((failed + 1)) ;;
     esac
   done
-  [[ ${#rows[@]} -gt 0 ]] || echo "当前主控方会话没有创建过协作方会话"
+  [[ ${#rows[@]} -gt 0 ]] || echo "this host session has not created any peer sessions"
   [[ $dry -eq 1 ]] && return 0
 
-  # 解除绑定，包括用 --resume 接上的、不是本会话创建的会话（它们本身不删除）
+  # Unbind everything, including sessions picked up with --resume that this host did not create (those are not deleted)
   local r
   for r in "${roots[@]}"; do
     [[ -d "$r/.agent-pair/sessions/$HOST_SID" ]] && rm -rf -- "$r/.agent-pair/sessions/$HOST_SID"
   done
-  echo "agent-pair: clear 完成，删除 $deleted 个，失败 $failed 个，已解除当前主控方会话的全部绑定"
+  echo "agent-pair: clear done, $deleted deleted, $failed failed, all bindings of this host session removed"
   [[ $failed -eq 0 ]]
 }
 
@@ -471,7 +472,7 @@ first="${1:-}"; shift || true
 case "$first" in
   codex|claude)
     sub="${1:-}"; shift || true
-    [[ "$sub" == "send" ]] || die "用法：pair.sh $first send <reviewer|writer> \"prompt\""
+    [[ "$sub" == "send" ]] || die "usage: pair.sh $first send <reviewer|writer> \"prompt\""
     cmd_send "$first" "$@"
     ;;
   status) cmd_status ;;
