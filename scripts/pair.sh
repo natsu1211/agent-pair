@@ -204,7 +204,7 @@ delete_peer_session() {
   case "$peer" in
     codex)
       command -v codex >/dev/null 2>&1 || return 1
-      if (cd "$ROOT" && AGENT_PAIR_PEER=1 codex delete --force "$id") >/dev/null 2>&1; then return 0; fi
+      if (cd "$ROOT" && AGENT_PAIR_PEER=1 codex delete --force "$id") </dev/null >/dev/null 2>&1; then return 0; fi
       peer_session_exists codex "$id" && return 1
       return 2
       ;;
@@ -236,11 +236,12 @@ run_codex() {
   [[ -n "${PAIR_CODEX_EXTRA:-}" ]] && opts+=($PAIR_CODEX_EXTRA)
   [[ "$prompt" == -* ]] && prompt=" $prompt"
 
+  # codex exec appends piped stdin to the prompt and waits for EOF, which never comes if the host's stdin is an open pipe
   local rc=0
   if [[ -n "$sid" ]]; then
-    AGENT_PAIR_PEER=1 codex exec "${opts[@]}" resume "$sid" "$prompt" >"$events" 2>&1 || rc=$?
+    AGENT_PAIR_PEER=1 codex exec "${opts[@]}" resume "$sid" "$prompt" </dev/null >"$events" 2>&1 || rc=$?
   else
-    AGENT_PAIR_PEER=1 codex exec "${opts[@]}" "$prompt" >"$events" 2>&1 || rc=$?
+    AGENT_PAIR_PEER=1 codex exec "${opts[@]}" "$prompt" </dev/null >"$events" 2>&1 || rc=$?
   fi
   [[ $rc -eq 0 ]] || return $rc
 
