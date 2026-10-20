@@ -1,111 +1,111 @@
-# 发给协作方的提示模板
+# Prompt templates for the peer
 
-协作方是另一个 AI 编程助手（Codex 或 Claude Code），它看不到你和用户的对话，只能看到你发的 prompt 和仓库里的代码。把 `<尖括号>` 换成实际内容。模板是起点，不必逐字照抄，但保留回复格式的要求，这样你才能可靠地判断要不要进入下一轮。
+The peer is another AI coding agent (Codex or Claude Code). It cannot see your conversation with the user; it only sees the prompt you send and the code in the repository. Replace `<angle brackets>` with real content. The templates are a starting point and need not be copied word for word, but keep the reply-format requirements so you can reliably decide whether another round is needed.
 
-## 目录
-- 请对方审查（第 1 轮）
-- 请对方复审（第 2 轮及以后）
-- 给对方的任务说明（第 1 轮）
-- 把审查意见发回给对方（第 2 轮及以后）
+## Contents
+- Ask the peer to review (round 1)
+- Re-review (round 2 and later)
+- Task brief for the peer (round 1)
+- Send review feedback (round 2 and later)
 
 ---
 
-## 请对方审查（第 1 轮）
+## Ask the peer to review (round 1)
 
 ```
-你是这次改动的代码审查者，由另一个 AI 编程助手调用。你没有修改文件的权限，也不需要修改，只给出审查意见。不要再调用其他 AI 助手。
+You are the code reviewer for this change, called by another AI coding agent. You have no permission to modify files and do not need to; only give review feedback. Do not call any other AI agent.
 
-## 背景
-<用户的原始需求，一两句话>
+## Background
+<the user's original request, in a sentence or two>
 
-## 改动范围
-基线提交：<BASE_SHA>
-请运行 `git diff <BASE_SHA>` 查看全部改动（包括未提交的部分），必要时阅读相关文件的上下文。新增的文件可以用 `git status` 找到。
-涉及的主要文件：<文件列表>
+## Scope of the change
+Baseline commit: <BASE_SHA>
+Run `git diff <BASE_SHA>` to see all changes (including uncommitted ones), and read the surrounding code where needed. New files can be found with `git status`.
+Main files involved: <file list>
 
-## 作者的说明
-<实现思路、做过的取舍、已知的局限、已运行过的测试及结果>
+## Notes from the author
+<approach, trade-offs made, known limitations, tests already run and their results>
 
-## 请重点关注
-正确性和边界情况、与现有代码的一致性、安全问题、遗漏的测试。不要在纯风格偏好上花篇幅。
+## Please focus on
+Correctness and edge cases, consistency with existing code, security issues, missing tests. Do not spend space on pure style preferences.
 
-## 回复格式
-逐条列出问题，每条以级别和位置开头：
-- [BLOCKER] path/to/file.ext:行号 — 问题描述；建议的改法
+## Reply format
+List the issues one by one, each starting with a severity and a location:
+- [BLOCKER] path/to/file.ext:line — description of the problem; suggested fix
 - [MAJOR] ...
 - [MINOR] ...
 - [NIT] ...
-没有问题的级别就省略。最后一行必须单独写：
+Omit severities with no issues. The last line must be on its own, either:
 VERDICT: APPROVE
-或
+or
 VERDICT: CHANGES_REQUESTED
 ```
 
-## 请对方复审（第 2 轮及以后）
+## Re-review (round 2 and later)
 
-对方记得上一轮的内容，只发增量。
+The peer remembers the previous round, so send only what changed.
 
 ```
-我根据你的意见做了修改，请复审。
+I made changes based on your feedback; please review again.
 
-## 已修改
-- <对应你哪一条意见>：<怎么改的>
+## Changed
+- <which of your points>: <how it was addressed>
 
-## 没有采纳
-- <哪一条>：<理由>
+## Not adopted
+- <which point>: <reason>
 
-## 新增的测试或验证
-<如有>
+## New tests or verification
+<if any>
 
-请再次运行 `git diff <BASE_SHA>` 查看最新的完整改动。如果你仍坚持某条没被采纳的意见，请说明原因。
-回复格式与上一轮相同，最后一行写 VERDICT。
+Run `git diff <BASE_SHA>` again to see the latest full change. If you still stand by a point that was not adopted, explain why.
+Use the same reply format as last round, with VERDICT on the last line.
 ```
 
 ---
 
-## 给对方的任务说明（第 1 轮）
+## Task brief for the peer (round 1)
 
 ```
-你负责实现下面这个任务，由另一个 AI 编程助手调用。完成后它会审查你的改动并反馈，你会在同一个会话中继续修改。不要再调用其他 AI 助手。
+You are responsible for implementing the task below, called by another AI coding agent. When you are done, it will review your changes and send feedback, and you will keep revising in the same session. Do not call any other AI agent.
 
-## 目标
-<要做成什么，用户可感知的结果>
+## Goal
+<what should be achieved, the user-visible outcome>
 
-## 约束
-- 只改动这些文件或目录：<范围>；如果确实需要改别处，先在回复里说明理由
-- 遵循仓库现有的风格和约定（参考 <示例文件>）
-- 不要 git commit，保留为工作区改动
-- <其他约束：不加新依赖、保持接口兼容等>
+## Constraints
+- Only change these files or directories: <scope>; if you really need to change something else, explain why in your reply first
+- Follow the repository's existing style and conventions (see <example file>)
+- Do not git commit; leave the changes in the working tree
+- <other constraints: no new dependencies, keep interfaces compatible, etc.>
 
-## 验收标准
-- <可检查的条件 1>
-- <可检查的条件 2>
-- 测试命令：<命令>。如果你没有权限或网络运行它，跳过并在回复中说明，审查方会来运行
+## Acceptance criteria
+- <checkable condition 1>
+- <checkable condition 2>
+- Test command: <command>. If you lack the permission or network to run it, skip it and say so in your reply; the reviewer will run it
 
-## 回复格式
-1. 改了哪些文件，各做了什么
-2. 关键的设计取舍
-3. 运行了哪些测试，结果如何
-4. 尚未完成或不确定的地方
+## Reply format
+1. Which files you changed and what each change does
+2. Key design trade-offs
+3. Which tests you ran and their results
+4. Anything unfinished or uncertain
 ```
 
-## 把审查意见发回给对方（第 2 轮及以后）
+## Send review feedback (round 2 and later)
 
 ```
-我审查了你的改动，请按下面的意见修改。
+I reviewed your changes; please revise according to the feedback below.
 
-## 必须修改
-- [BLOCKER] path/file.ext:行号 — <问题>；<期望的改法或方向>
+## Required changes
+- [BLOCKER] path/file.ext:line — <problem>; <expected fix or direction>
 - [MAJOR] ...
 
-## 建议修改（可自行判断）
+## Suggested changes (use your judgment)
 - [MINOR] ...
 
-## 做得好、请保留的部分
-- <一两条，免得修改时把对的东西改坏>
+## Done well, please keep
+- <one or two points, so revisions do not break what is right>
 
-## 测试结果
-<你运行测试的命令和结果，失败时附上关键报错>
+## Test results
+<the test commands you ran and their results, with the key errors on failure>
 
-如果你不同意某条意见，请说明理由而不是直接忽略。改完后按上一轮相同的格式回复。
+If you disagree with a point, explain why instead of silently ignoring it. When done, reply in the same format as last round.
 ```

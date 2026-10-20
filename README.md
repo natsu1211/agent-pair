@@ -1,78 +1,79 @@
 # agent-pair
 
-让 Claude Code 和 OpenAI Codex CLI 互相审查代码的 skill，两边都能用。
+A skill that lets Claude Code and OpenAI Codex CLI review each other's code. It works from either side.
 
-当前正在用的一方是**主控方**，另一方是**协作方**，在后台通过 CLI 调用。有两种分工：
+The agent you are using is the **host**; the other one is the **peer**, called in the background through its CLI. There are two ways to split the work:
 
-| 模式 | 写代码 | 审查 |
+| Mode | Writes code | Reviews |
 |---|---|---|
-| A：我写，对方审 | 主控方 | 协作方（只读） |
-| B：对方写，我审 | 协作方 | 主控方（不改代码） |
+| A: I write, peer reviews | host | peer (read-only) |
+| B: peer writes, I review | peer | host (does not change code) |
 
-由不是作者的一方来审查，才容易发现作者自己看不到的问题。所以两边的角色严格分开，审查方不会顺手改代码。
+A reviewer who is not the author is far more likely to spot what the author cannot see. That is why the roles are kept strictly apart and the reviewer never fixes code on the side.
 
-## 特点
+## Features
 
-- **多轮共用一个会话**：通过 `codex exec resume` / `claude -p --resume` 接续，协作方记得前几轮的意见，每轮只需发增量。
-- **会话可接续、可清理**：每次结束都会返回协作方的会话 id，之后可以用 `--resume` 接着聊；`--clear` 一次删除当前会话创建的全部协作方会话。
-- **权限收紧**：审查方只读；编写方只能改工作区文件，不能提交。
-- **防递归**：被调用的协作方会带上 `AGENT_PAIR_PEER`，它不会再反过来调用对方。
+- **One session across rounds**: continued via `codex exec resume` / `claude -p --resume`, so the peer remembers earlier feedback and each round only needs the delta.
+- **Resumable and clearable sessions**: every run reports the peer session id, which you can continue later with `--resume`; `--clear` deletes every peer session the current session created in one go.
+- **Tight permissions**: the reviewer is read-only; the writer can only edit workspace files and cannot commit.
+- **Recursion guard**: the peer runs with `AGENT_PAIR_PEER` set, so it never calls back into the host.
+- **Replies in your language**: the skill is written in English, but the host always talks to you in the language you use.
 
-## 依赖
+## Requirements
 
-- `git`、`bash`
-- 协作方的 CLI，并已登录：
-  - 在 Claude Code 里用时需要 `codex`，要支持 `codex exec resume`；`--clear` 还需要 `codex delete`
-  - 在 Codex 里用时需要 `claude`
-- 推荐安装 `jq`，没有时使用 `python3` 解析 JSON
+- `git`, `bash`
+- The peer's CLI, logged in:
+  - from Claude Code: `codex` with `codex exec resume` support; `--clear` also needs `codex delete`
+  - from Codex: `claude`
+- `jq` is recommended; `python3` is used to parse JSON when it is missing
 
-## 安装
+## Installation
 
-Claude Code：
+Claude Code:
 
 ```bash
 git clone https://github.com/natsu1211/agent-pair.git ~/.claude/skills/agent-pair
 ```
 
-Codex：放进 Codex 的用户级 skill 目录。两边都用的话，建议只 clone 一份，再建软链接：
+Codex: put it in Codex's user-level skill directory. If you use both, clone once and symlink:
 
 ```bash
 mkdir -p ~/.agents/skills
 ln -s ~/.claude/skills/agent-pair ~/.agents/skills/agent-pair
 ```
 
-更新：`git -C ~/.claude/skills/agent-pair pull`
+Update: `git -C ~/.claude/skills/agent-pair pull`
 
-## 用法
+## Usage
 
-直接用自然语言说，skill 会根据说法判断模式：
+Just ask in natural language; the skill infers the mode from what you say:
 
-- "你来实现，让 codex 审一下" → 模式 A
-- "让 codex 来写，你来审" → 模式 B
-- 在 Codex 里："让 claude 审查这次改动"
+- "Implement this and have Codex review it" → mode A
+- "Let Codex write it and you review" → mode B
+- In Codex: "Have Claude review this change"
 
-也可以显式调用并带参数：
+Or invoke it explicitly with arguments:
 
-| 调用 | 行为 |
+| Invocation | Behavior |
 |---|---|
-| `/agent-pair` | 接上当前会话已绑定的协作方会话，没有就新建 |
-| `/agent-pair --new` | 协作方新开会话 |
-| `/agent-pair --resume <id>` | 接上指定的协作方会话 |
-| `/agent-pair --clear` | 永久删除当前会话创建过的全部协作方会话 |
+| `/agent-pair` | Continue the peer session bound to the current session, or start a new one |
+| `/agent-pair --new` | Start a fresh peer session |
+| `/agent-pair --resume <id>` | Continue the given peer session |
+| `/agent-pair --clear` | Permanently delete every peer session the current session created |
 
-在 Codex 里把 `/agent-pair` 换成 `$agent-pair`。
+In Codex, use `$agent-pair` instead of `/agent-pair`.
 
-`--clear` 只删除当前主控方会话**创建的**协作方会话。用 `--resume` 接上的、由其他会话创建的协作方会话只解除绑定，不会删除。
+`--clear` only deletes peer sessions **created by** the current host session. Peer sessions picked up with `--resume` that another session created are only unbound, never deleted.
 
-## 配置
+## Configuration
 
-复制示例配置后修改：
+Copy the example config and edit it:
 
 ```bash
 cp ~/.claude/skills/agent-pair/config.env.example ~/.claude/skills/agent-pair/config.env
 ```
 
-可以按"协作方 × 角色"分别设置模型和 effort，例如：
+Model and effort can be set per peer × role, for example:
 
 ```
 PAIR_CODEX_REVIEWER_MODEL=gpt-5
@@ -80,45 +81,45 @@ PAIR_CODEX_REVIEWER_EFFORT=high
 PAIR_CLAUDE_WRITER_MODEL=opus
 ```
 
-优先级从高到低：
+Highest priority first:
 
-1. 对话中指定（skill 会转成 `send` 的 `--model` / `--effort` 参数）
-2. 同名环境变量
-3. 项目级配置 `<仓库根>/.agent-pair/config.env`
-4. 全局配置 `<skill 目录>/config.env`
-5. 协作方 CLI 自己的默认值
+1. Named in the conversation (the skill turns it into `--model` / `--effort` on `send`)
+2. Environment variables with the same names
+3. Project config `<repo root>/.agent-pair/config.env`
+4. Global config `<skill dir>/config.env`
+5. The peer CLI's own defaults
 
-配置文件是 `KEY=value` 纯文本，只作为数据读取，不会被执行。项目级配置可能来自别人的仓库，所以只允许设置模型和 effort。涉及权限的 `PAIR_CODEX_EXTRA`、`PAIR_CLAUDE_REVIEWER_TOOLS`、`PAIR_CLAUDE_WRITER_TOOLS` 只能写在环境变量或全局配置里。
+Config files are plain `KEY=value` text, read as data and never executed. A project config may come from someone else's repository, so it may only set models and efforts. The permission-related `PAIR_CODEX_EXTRA`, `PAIR_CLAUDE_REVIEWER_TOOLS` and `PAIR_CLAUDE_WRITER_TOOLS` are only honored from environment variables or the global config.
 
-## 权限与沙箱
+## Permissions and sandbox
 
-协作方要联网访问自己的模型 API，还要写入自己的会话目录（`~/.codex` 或 `~/.claude`）。所以如果主控方开了沙箱，`scripts/pair.sh` 需要在沙箱外运行，执行时会弹出确认。
+The peer needs network access to its own model API and must write to its own session directory (`~/.codex` or `~/.claude`). So if the host runs with a sandbox, `scripts/pair.sh` has to run outside it, and you will get an approval prompt.
 
-脚本给协作方设置的权限：
+Permissions the script gives the peer:
 
 | | Codex | Claude Code |
 |---|---|---|
-| reviewer | `read-only` 沙箱 | 禁用编辑工具，Bash 只放行 `git diff/log/show/status` |
-| writer | `workspace-write` 沙箱 | 自动接受编辑，Bash 只放行 `git diff/status` |
+| reviewer | `read-only` sandbox | edit tools disabled, Bash limited to `git diff/log/show/status` |
+| writer | `workspace-write` sandbox | edits auto-accepted, Bash limited to `git diff/status` |
 
-因此协作方通常跑不了测试，测试由主控方来跑。需要的话，可以在全局配置里用 `PAIR_CLAUDE_*_TOOLS` 放行具体命令，例如 `Bash(npm test:*)`。
+So the peer usually cannot run tests; the host runs them. If needed, allow specific commands through `PAIR_CLAUDE_*_TOOLS` in the global config, e.g. `Bash(npm test:*)`.
 
-## 文件与状态
+## Files and state
 
-| 位置 | 内容 |
+| Location | Contents |
 |---|---|
-| `<仓库根>/.agent-pair/` | 会话绑定和每轮完整日志（`<peer>-<role>.log`），自带 `.gitignore` |
-| `~/.agent-pair/ledger.tsv` | 每个协作方会话由哪个主控方会话创建，供 `--clear` 使用；可用 `AGENT_PAIR_HOME` 改位置 |
+| `<repo root>/.agent-pair/` | Session bindings and full per-round logs (`<peer>-<role>.log`); ships its own `.gitignore` |
+| `~/.agent-pair/ledger.tsv` | Which host session created each peer session, used by `--clear`; relocatable with `AGENT_PAIR_HOME` |
 
-主控方会话 id 由脚本自动识别：Claude Code 用 `CLAUDE_CODE_SESSION_ID`，Codex 用 `CODEX_THREAD_ID`。识别不到时可以设置 `PAIR_HOST_SESSION` 手动指定。
+The script detects the host session id itself: `CLAUDE_CODE_SESSION_ID` in Claude Code, `CODEX_THREAD_ID` in Codex. If detection fails, set `PAIR_HOST_SESSION` manually.
 
-## 目录结构
+## Layout
 
 ```
-SKILL.md               skill 本体，给 agent 读的流程说明
-references/prompts.md  发给协作方的提示模板
-scripts/pair.sh        与协作方通信、管理会话的脚本
-config.env.example     配置示例
+SKILL.md               the skill itself: the workflow the agent follows
+references/prompts.md  prompt templates sent to the peer
+scripts/pair.sh        talks to the peer and manages sessions
+config.env.example     example config
 ```
 
 ## License
