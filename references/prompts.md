@@ -19,8 +19,8 @@ You are the code reviewer for this change, called by another AI coding agent. Yo
 <the user's original request, in a sentence or two>
 
 ## Scope of the change
-Baseline commit: <BASE_SHA>
-Run `git diff <BASE_SHA>` to see all changes (including uncommitted ones), and read the surrounding code where needed. New files can be found with `git status`.
+<one line on what is being reviewed, e.g. "the changes since your last review" or "the whole feature branch">
+Run `git diff <FROM> <TO>` to see the changes under review. <TO> is a snapshot of the current working tree, uncommitted and new files included, so the files on disk match it; read the surrounding code where needed.
 Main files involved: <file list>
 
 ## Notes from the author
@@ -57,7 +57,7 @@ I made changes based on your feedback; please review again.
 ## New tests or verification
 <if any>
 
-Run `git diff <BASE_SHA>` again to see the latest full change. If you still stand by a point that was not adopted, explain why.
+Run `git diff <FROM> <NEW_TO>` to see the latest full change, or `git diff <PREVIOUS_TO> <NEW_TO>` for just this round's fixes. If you still stand by a point that was not adopted, explain why.
 Use the same reply format as last round, with VERDICT on the last line.
 ```
 
