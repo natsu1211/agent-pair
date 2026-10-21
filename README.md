@@ -1,6 +1,14 @@
+<div align="center">
+
 # agent-pair
 
 A skill that lets Claude Code and OpenAI Codex CLI review each other's code. It works from either side.
+
+**English** | [中文](./README.zh-CN.md)
+
+</div>
+
+---
 
 The agent you are using is the **host**; the other one is the **peer**, called in the background through its CLI. There are two ways to split the work:
 
